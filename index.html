@@ -15,16 +15,10 @@ canvas{display:block;touch-action:manipulation}
 <script>
 // ─── CONFIG ───
 const C = {
-  particles: 350,
-  speedBase: 2.2,
-  gridRes: 20,
-  noiseScale: 0.008,
-  windBias: 0.5,
-  fadeAlpha: 0.12,
-  maxSpeed: 3.0,
-  warmupSteps: 40,
-  lat: 37.77,
-  lon: -122.42,
+  particles: 500,
+  fadeAlpha: 0.06,
+  warmupSteps: 500,
+  trailHistory: 60,
 };
 
 // ─── PALETTE (RGBA arrays) ───
@@ -93,122 +87,115 @@ function noise3D(xin, yin, zin) {
 // ─── CANVAS SETUP ───
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-let W, H, cols, rows;
+let W, H;
 
 function resize() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
-  cols = Math.ceil(W / C.gridRes) + 1;
-  rows = Math.ceil(H / C.gridRes) + 1;
 }
 resize();
 window.addEventListener('resize', resize);
 
 // ─── STATE ───
 let particles = [];
-let field = [];
-let zoff = 0;
-let windAngle = Math.PI / 2;
-let windSpeed = 5;
-let dataLoaded = false;
 let started = false;
 
 // ─── HELPERS ───
-function lerpAngle(a, b, t) {
-  let d = b - a;
-  if (d > Math.PI) d -= 2 * Math.PI;
-  if (d < -Math.PI) d += 2 * Math.PI;
-  return a + d * t;
-}
-
 function rand(min, max) { return min + Math.random() * (max - min); }
-
-// ─── FLOW FIELD ───
-function stepField() {
-  field = [];
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      let n = noise3D(x * C.noiseScale, y * C.noiseScale, zoff);
-      let noiseAngle = n * Math.PI * 4;
-      let angle = dataLoaded ? lerpAngle(noiseAngle, windAngle, C.windBias) : noiseAngle;
-      field.push({ x: Math.cos(angle), y: Math.sin(angle) });
-    }
-  }
-  zoff += 0.003;
-}
 
 // ─── PARTICLE ───
 class Particle {
   constructor() {
     this.pos = { x: rand(0, W), y: rand(0, H) };
     this.prev = { x: this.pos.x, y: this.pos.y };
-    this.vel = { x: 0, y: 0 };
-    this.acc = { x: 0, y: 0 };
+    this.origin = { x: this.pos.x, y: this.pos.y };
+    this.phase = rand(0, Math.PI * 2);
+    this.orbitSpeed = rand(0.003, 0.012);
+    this.orbitRadius = rand(20, 150);
+    this.driftX = rand(-0.3, 0.3);
+    this.driftY = rand(-0.3, 0.3);
     this.color = TRAIL_COLORS[Math.floor(Math.random() * TRAIL_COLORS.length)];
-    this.maxSpd = rand(1.0, C.maxSpeed);
-  }
-
-  follow() {
-    let gx = Math.floor(this.pos.x / C.gridRes);
-    let gy = Math.floor(this.pos.y / C.gridRes);
-    let idx = gx + gy * cols;
-    if (idx >= 0 && idx < field.length && field[idx]) {
-      this.acc.x += field[idx].x;
-      this.acc.y += field[idx].y;
-    }
+    this.trail = [];
   }
 
   move() {
     this.prev.x = this.pos.x;
     this.prev.y = this.pos.y;
-    this.vel.x += this.acc.x;
-    this.vel.y += this.acc.y;
-    let spd = Math.sqrt(this.vel.x * this.vel.x + this.vel.y * this.vel.y);
-    if (spd > this.maxSpd) {
-      this.vel.x = (this.vel.x / spd) * this.maxSpd;
-      this.vel.y = (this.vel.y / spd) * this.maxSpd;
-    }
-    this.pos.x += this.vel.x;
-    this.pos.y += this.vel.y;
-    this.acc.x = 0;
-    this.acc.y = 0;
+
+    this.phase += this.orbitSpeed;
+
+    // Orbit around origin
+    let ox = Math.cos(this.phase) * this.orbitRadius;
+    let oy = Math.sin(this.phase * 0.7) * this.orbitRadius * 0.6;
+
+    // Noise perturbation
+    let n = noise3D(
+      this.origin.x * 0.002 + this.phase * 0.1,
+      this.origin.y * 0.002 + this.phase * 0.08,
+      this.phase * 0.05
+    );
+
+    let targetX = this.origin.x + ox + n * 30 + this.driftX * this.phase * 5;
+    let targetY = this.origin.y + oy + n * 20 + this.driftY * this.phase * 5;
+
+    // Smooth interpolation toward target
+    this.pos.x += (targetX - this.pos.x) * 0.03;
+    this.pos.y += (targetY - this.pos.y) * 0.03;
+
+    // Store trail
+    this.trail.push({ x: this.prev.x, y: this.prev.y });
+    if (this.trail.length > C.trailHistory) this.trail.shift();
   }
 
   wrap() {
-    let margin = 40;
-    if (this.pos.x < -margin) { this.pos.x = W + margin; this.prev.x = this.pos.x; }
-    if (this.pos.x > W + margin) { this.pos.x = -margin; this.prev.x = this.pos.x; }
-    if (this.pos.y < -margin) { this.pos.y = H + margin; this.prev.y = this.pos.y; }
-    if (this.pos.y > H + margin) { this.pos.y = -margin; this.prev.y = this.pos.y; }
+    let margin = 50;
+    if (this.pos.x < -margin) { this.pos.x = W + margin; this.origin.x = this.pos.x; }
+    if (this.pos.x > W + margin) { this.pos.x = -margin; this.origin.x = this.pos.x; }
+    if (this.pos.y < -margin) { this.pos.y = H + margin; this.origin.y = this.pos.y; }
+    if (this.pos.y > H + margin) { this.pos.y = -margin; this.origin.y = this.pos.y; }
   }
 
-  show() {
+  show(showTrails) {
     let [r, g, b] = this.color;
-    ctx.strokeStyle = `rgba(${r},${g},${b},0.35)`;
-    ctx.lineWidth = 1.4;
+    // Full trail rendering (used on first frame after warmup)
+    if (showTrails && this.trail.length > 1) {
+      for (let i = 1; i < this.trail.length; i++) {
+        let t = i / this.trail.length;
+        ctx.strokeStyle = `rgba(${r},${g},${b},${t * 0.35})`;
+        ctx.lineWidth = t * 1.5 + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(this.trail[i-1].x, this.trail[i-1].y);
+        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+        ctx.stroke();
+      }
+    }
+    // Live trail segment
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`;
+    ctx.lineWidth = 2.0;
     ctx.beginPath();
     ctx.moveTo(this.prev.x, this.prev.y);
     ctx.lineTo(this.pos.x, this.pos.y);
     ctx.stroke();
+    // Dot at current position
+    ctx.fillStyle = `rgba(${r},${g},${b},0.8)`;
+    ctx.beginPath();
+    ctx.arc(this.pos.x, this.pos.y, 1.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
-// ─── FETCH WIND DATA ───
-function fetchWind() {
-  let url = `https://api.open-meteo.com/v1/forecast?latitude=${C.lat}&longitude=${C.lon}&current=wind_speed_10m,wind_direction_10m`;
-  fetch(url)
-    .then(r => r.json())
-    .then(d => {
-      let ws = d.current && d.current.wind_speed_10m;
-      let wd = d.current && d.current.wind_direction_10m;
-      if (ws != null && wd != null) {
-        windSpeed = Math.max(ws, 0.5);
-        windAngle = wd * Math.PI / 180;
-        dataLoaded = true;
-      }
-    })
-    .catch(() => {});
+// ─── INIT ───
+function init() {
+  ctx.fillStyle = `rgb(${BG[0]},${BG[1]},${BG[2]})`;
+  ctx.fillRect(0, 0, W, H);
+  createParticles();
+  warmup();
+  started = true;
+  // Draw full trail histories on first frame
+  for (let p of particles) p.show(true);
+  draw();
 }
+init();
 
 // ─── CREATE PARTICLES ───
 function createParticles() {
@@ -221,20 +208,16 @@ function createParticles() {
 // ─── WARM UP ───
 function warmup() {
   for (let i = 0; i < C.warmupSteps; i++) {
-    stepField();
-    for (let p of particles) { p.follow(); p.move(); }
+    for (let p of particles) { p.move(); p.wrap(); }
   }
 }
 
 // ─── DRAW ───
 function draw() {
-  // Fade trails with semi-transparent background
   ctx.fillStyle = `rgba(${BG[0]},${BG[1]},${BG[2]},${C.fadeAlpha})`;
   ctx.fillRect(0, 0, W, H);
 
-  stepField();
   for (let p of particles) {
-    p.follow();
     p.move();
     p.wrap();
     p.show();
@@ -249,13 +232,14 @@ function reset() {
   for (let p of particles) {
     p.pos = { x: rand(0, W), y: rand(0, H) };
     p.prev = { x: p.pos.x, y: p.pos.y };
-    p.vel = { x: 0, y: 0 };
-    p.acc = { x: 0, y: 0 };
+    p.origin = { x: p.pos.x, y: p.pos.y };
+    p.phase = rand(0, Math.PI * 2);
+    p.trail = [];
   }
-  for (let i = 0; i < 20; i++) {
-    stepField();
-    for (let p of particles) { p.follow(); p.move(); }
+  for (let i = 0; i < 100; i++) {
+    for (let p of particles) { p.move(); p.wrap(); }
   }
+  for (let p of particles) p.show(true);
 }
 
 // ─── INTERACTION ───
@@ -280,8 +264,8 @@ function init() {
   createParticles();
   warmup();
   started = true;
-  // Draw initial frame so first render has content
-  for (let p of particles) p.show();
+  // Draw full trail histories on first frame so canvas is rich immediately
+  for (let p of particles) p.show(true);
   fetchWind();
   draw();
 }
