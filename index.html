@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Drift</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1/lib/p5.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#05050a}
+canvas{display:block;touch-action:manipulation}
+</style>
+</head>
+<body>
+<script>
+// ponytail: single-file, zero backend, data-driven generative art
+
+// ─── CONFIG ───
+const C = {
+  particles: 400,
+  trailLen: 60,
+  speedBase: 2.5,
+  gridRes: 18,
+  noiseScale: 0.06,
+  windBias: 0.55,      // 0 = pure noise, 1 = pure wind
+  fadeAlpha: 10,       // per-frame fade for trails
+  lat: 37.77,
+  lon: -122.42,
+};
+
+// ─── PALETTE ───
+const BG = [5, 5, 10];
+const HUES = [
+  [60, 200, 255],   // bright cyan
+  [120, 220, 255],  // light blue
+  [180, 235, 255],  // ice
+  [100, 180, 230],  // steel
+  [200, 240, 255],  // white-blue
+];
+
+// ─── STATE ───
+let parts = [];
+let field = [];
+let cols, rows;
+let zoff = 0;
+let baseAngle = PI / 2;  // default easterly wind
+let windSpeed = 5;
+let dataLoaded = false;
+let started = false;
+
+// ─── SETUP ───
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  colorMode(RGB);
+  cols = ceil(width / C.gridRes) + 1;
+  rows = ceil(height / C.gridRes) + 1;
+  background(...BG);
+
+  // Fetch current wind
+  let url = `https://api.open-meteo.com/v1/forecast?latitude=${C.lat}&longitude=${C.lon}&current=wind_speed_10m,wind_direction_10m`;
+  fetch(url)
+    .then(r => r.json())
+    .then(d => {
+      let ws = d.current.wind_speed_10m;
+      let wd = d.current.wind_direction_10m;
+      if (ws != null && wd != null) {
+        windSpeed = max(ws, 0.5);
+        baseAngle = radians(wd);
+        dataLoaded = true;
+      }
+    })
+    .catch(() => { dataLoaded = true; });
+
+  // Spawn particles
+  for (let i = 0; i < C.particles; i++) {
+    parts.push(new Particle());
+  }
+
+  // Warm up: pre-run simulation so first frame isn't blank
+  for (let i = 0; i < 30; i++) {
+    stepField();
+    for (let p of parts) { p.follow(); p.move(); }
+  }
+  drawFrame();
+  started = true;
+}
+
+function draw() {
+  if (!started) return;
+  // Fade trails
+  noStroke();
+  fill(BG[0], BG[1], BG[2], C.fadeAlpha);
+  rect(0, 0, width, height);
+
+  stepField();
+  for (let p of parts) {
+    p.follow();
+    p.move();
+    p.wrap();
+    p.show();
+  }
+}
+
+function stepField() {
+  field = [];
+  let yoff = 0;
+  for (let y = 0; y < rows; y++) {
+    let xoff = 0;
+    for (let x = 0; x < cols; x++) {
+      let n = noise(xoff, yoff, zoff);
+      let noiseAngle = n * TWO_PI * 2;
+      let angle = dataLoaded
+        ? lerpAngle(noiseAngle, baseAngle, C.windBias)
+        : noiseAngle;
+      let v = p5.Vector.fromAngle(angle);
+      let mag = dataLoaded
+        ? map(windSpeed, 0, 40, 0.3, C.speedBase)
+        : C.speedBase * 0.6;
+      v.setMag(mag);
+      field.push(v);
+      xoff += C.noiseScale;
+    }
+    yoff += C.noiseScale;
+  }
+  zoff += 0.002;
+}
+
+function lerpAngle(a, b, t) {
+  let d = b - a;
+  if (d > PI) d -= TWO_PI;
+  if (d < -PI) d += TWO_PI;
+  return a + d * t;
+}
+
+// ─── PARTICLE ───
+class Particle {
+  constructor() {
+    this.pos = createVector(random(width), random(height));
+    this.vel = createVector(0, 0);
+    this.acc = createVector(0, 0);
+    this.prev = this.pos.copy();
+    this.hue = random(HUES);
+    this.maxSpeed = random(1.2, 2.8);
+    this.trail = [];
+  }
+
+  follow() {
+    let x = floor(this.pos.x / C.gridRes);
+    let y = floor(this.pos.y / C.gridRes);
+    let idx = x + y * cols;
+    if (idx >= 0 && idx < field.length && field[idx]) {
+      this.acc.add(field[idx]);
+    }
+  }
+
+  move() {
+    this.prev.set(this.pos);
+    this.vel.add(this.acc);
+    this.vel.limit(this.maxSpeed);
+    this.pos.add(this.vel);
+    this.acc.mult(0);
+  }
+
+  wrap() {
+    if (this.pos.x < -30) { this.pos.x = width + 30; this.prev.set(this.pos); }
+    if (this.pos.x > width + 30) { this.pos.x = -30; this.prev.set(this.pos); }
+    if (this.pos.y < -30) { this.pos.y = height + 30; this.prev.set(this.pos); }
+    if (this.pos.y > height + 30) { this.pos.y = -30; this.prev.set(this.pos); }
+  }
+
+  show() {
+    let [r, g, b] = this.hue;
+    // Fading tail: draw segment from prev to current
+    stroke(r, g, b, 120);
+    strokeWeight(1.6);
+    line(this.prev.x, this.prev.y, this.pos.x, this.pos.y);
+  }
+}
+
+function drawFrame() {
+  for (let p of parts) p.show();
+}
+
+// ─── RESIZE ───
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  cols = ceil(width / C.gridRes) + 1;
+  rows = ceil(height / C.gridRes) + 1;
+  background(...BG);
+}
+
+// ─── CLICK — reset and respawn ───
+let touchGuard = false;
+
+function mousePressed() {
+  if (touchGuard) { touchGuard = false; return; }
+  reset();
+}
+
+function touchStarted() {
+  touchGuard = true;
+  setTimeout(() => { touchGuard = false; }, 200);
+  reset();
+  return false;
+}
+
+function reset() {
+  background(...BG);
+  for (let p of parts) {
+    p.pos = createVector(random(width), random(height));
+    p.prev = p.pos.copy();
+    p.vel = createVector(0, 0);
+    p.acc = createVector(0, 0);
+  }
+  // Warm up new positions
+  for (let i = 0; i < 20; i++) {
+    stepField();
+    for (let p of parts) { p.follow(); p.move(); }
+  }
+}
+</script>
+</body>
+</html>
