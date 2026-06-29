@@ -22,7 +22,7 @@
   }
   #info {
     position: fixed;
-    bottom: 24px;
+    bottom: 16px;
     left: 50%;
     transform: translateX(-50%);
     color: rgba(0,0,0,0.4);
@@ -31,6 +31,19 @@
     text-align: center;
     pointer-events: none;
     user-select: none;
+  }
+  #data-bar {
+    position: fixed;
+    bottom: 38px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(0,0,0,0.3);
+    font-size: 10px;
+    letter-spacing: 0.3px;
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+    font-family: system-ui,sans-serif;
   }
   #wind-dir {
     position: fixed;
@@ -44,10 +57,15 @@
     user-select: none;
     line-height: 1.6;
   }
+  #wind-dir .speed {
+    font-weight: 700;
+    font-size: 14px;
+  }
 </style>
 </head>
 <body>
 <canvas id="c" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:block"></canvas>
+<div id="data-bar">Open-Meteo SF Wind · — km/h — · fetching...</div>
 <div id="info">wind carries these particles across the city</div>
 <div id="wind-dir">loading wind...</div>
 
@@ -93,6 +111,7 @@ window.addEventListener('resize', resize);
 // ─── Wind State ───────────────────────────────────────────────────
 let wind = { dir: CONFIG.fallback.winddirection, speed: CONFIG.fallback.windspeed };
 let vx = 0, vy = 0;
+let lastFetchTime = 0;
 
 // Open-Meteo: winddirection (0=N, 90=E), windspeed (km/h)
 // Convert: vx = -sin(dir*PI/180) * speed * scale
@@ -209,8 +228,24 @@ function drawWindIndicator() {
   const windEl = document.getElementById('wind-dir');
   const dirNames = ['N','NE','E','SE','S','SW','W','NW'];
   const idx = Math.round((wind.dir % 360) / 45) % 8;
-  const label = `${Math.round(wind.speed)} km/h ${dirNames[idx]}`;
-  windEl.textContent = label;
+  const label = `<span class="speed">${Math.round(wind.speed)}</span> km/h ${dirNames[idx]}`;
+  windEl.innerHTML = label;
+}
+
+// ─── Update data bar ──────────────────────────────────────────────────
+function updateDataBar() {
+  const bar = document.getElementById('data-bar');
+  if (!bar) return;
+  const dirNames = ['N','NE','E','SE','S','SW','W','NW'];
+  const idx = Math.round((wind.dir % 360) / 45) % 8;
+  let updateText = '';
+  if (lastFetchTime > 0) {
+    const secs = Math.floor((performance.now() - lastFetchTime) / 1000);
+    updateText = secs < 60 ? secs + 's ago' : Math.floor(secs / 60) + 'm ago';
+  } else {
+    updateText = 'fetching...';
+  }
+  bar.textContent = 'Open-Meteo SF Wind · ' + Math.round(wind.speed) + ' km/h ' + dirNames[idx] + ' · ' + particles.length + ' particles · updated ' + updateText;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────
@@ -238,6 +273,7 @@ function loop() {
   }
 
   drawWindIndicator();
+  updateDataBar();
 
   requestAnimationFrame(loop);
 }
@@ -252,9 +288,11 @@ async function fetchWind() {
       wind.dir = data.current_weather.winddirection;
       wind.speed = data.current_weather.windspeed;
       updateWindVector();
+      lastFetchTime = performance.now();
     }
   } catch (e) {
     console.warn('Wind API failed, using fallback:', e.message);
+    lastFetchTime = performance.now();
     // fallback already set
   }
 }
