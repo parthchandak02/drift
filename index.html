@@ -32,19 +32,7 @@
     pointer-events: none;
     user-select: none;
   }
-  #data-bar {
-    position: fixed;
-    bottom: 38px;
-    left: 50%;
-    transform: translateX(-50%);
-    color: rgba(0,0,0,0.3);
-    font-size: 10px;
-    letter-spacing: 0.3px;
-    text-align: center;
-    pointer-events: none;
-    user-select: none;
-    font-family: system-ui,sans-serif;
-  }
+  #databar{position:fixed;bottom:56px;left:50%;transform:translateX(-50%);color:rgba(0,0,0,0.25);font:10px/1.2 system-ui,sans-serif;letter-spacing:0.4px;pointer-events:none;z-index:10}
   #wind-dir {
     position: fixed;
     top: 24px;
@@ -65,9 +53,9 @@
 </head>
 <body>
 <canvas id="c" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:block"></canvas>
-<div id="data-bar">Open-Meteo SF Wind · — km/h — · fetching...</div>
-<div id="info">wind carries these particles across the city</div>
 <div id="wind-dir">loading wind...</div>
+<div id="databar">Open-Meteo · loading...</div>
+<div id="info">wind carries these particles across the city</div>
 
 <script>
 // ─── Config ───────────────────────────────────────────────────────
@@ -111,7 +99,7 @@ window.addEventListener('resize', resize);
 // ─── Wind State ───────────────────────────────────────────────────
 let wind = { dir: CONFIG.fallback.winddirection, speed: CONFIG.fallback.windspeed };
 let vx = 0, vy = 0;
-let lastFetchTime = 0;
+let lastFetchTime = performance.now();
 
 // Open-Meteo: winddirection (0=N, 90=E), windspeed (km/h)
 // Convert: vx = -sin(dir*PI/180) * speed * scale
@@ -232,20 +220,13 @@ function drawWindIndicator() {
   windEl.innerHTML = label;
 }
 
-// ─── Update data bar ──────────────────────────────────────────────────
+// ─── Data bar update ───
 function updateDataBar() {
-  const bar = document.getElementById('data-bar');
-  if (!bar) return;
-  const dirNames = ['N','NE','E','SE','S','SW','W','NW'];
-  const idx = Math.round((wind.dir % 360) / 45) % 8;
-  let updateText = '';
-  if (lastFetchTime > 0) {
-    const secs = Math.floor((performance.now() - lastFetchTime) / 1000);
-    updateText = secs < 60 ? secs + 's ago' : Math.floor(secs / 60) + 'm ago';
-  } else {
-    updateText = 'fetching...';
-  }
-  bar.textContent = 'Open-Meteo SF Wind · ' + Math.round(wind.speed) + ' km/h ' + dirNames[idx] + ' · ' + particles.length + ' particles · updated ' + updateText;
+  const el = document.getElementById('databar');
+  if (!el) return;
+  const now = performance.now();
+  const ago = Math.round((now - lastFetchTime) / 1000);
+  el.textContent = `Open-Meteo SF wind · ${Math.round(wind.speed)} km/h · updated ${ago}s ago · ${particles.length} particles`;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────
