@@ -45,6 +45,25 @@
     user-select: none;
     line-height: 1.6;
   }
+  #detail {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 16px 22px;
+    border-radius: 14px;
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: rgba(0,0,0,0.6);
+    font: 13px/1.7 system-ui, sans-serif;
+    pointer-events: none;
+    user-select: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  #detail.visible { opacity: 1; }
+  #detail b { color: rgba(0,0,0,0.75); }
   #wind-dir .speed {
     font-weight: 700;
     font-size: 14px;
@@ -55,7 +74,8 @@
 <canvas id="c" style="position:fixed;top:0;left:0;width:100vw;height:100vh;display:block"></canvas>
 <div id="wind-dir">loading wind...</div>
 <div id="databar">Open-Meteo · loading...</div>
-<div id="info">wind carries these particles across the city</div>
+<div id="info">wind carries these particles across the city · tap for a gust and details</div>
+<div id="detail" aria-live="polite"></div>
 
 <script>
 // ─── Config ───────────────────────────────────────────────────────
@@ -82,6 +102,11 @@ const CONFIG = {
 
   // Default fallback wind (typical SF)
   fallback: { winddirection: 180, windspeed: 15 },
+
+  refreshMs: 10 * 60 * 1000,   // re-fetch the wind every 10 minutes
+  gustRadius: 160,             // px around a tap that particles are pushed away from
+  gustStrength: 6,
+  detailMs: 3000,              // how long the tap panel stays up
 };
 
 // ─── Canvas Setup ─────────────────────────────────────────────────
@@ -99,7 +124,8 @@ window.addEventListener('resize', resize);
 // ─── Wind State ───────────────────────────────────────────────────
 let wind = { dir: CONFIG.fallback.winddirection, speed: CONFIG.fallback.windspeed };
 let vx = 0, vy = 0;
-let lastFetchTime = performance.now();
+let lastFetchTime = null;   // performance.now() of the last successful fetch
+let isLive = false;         // false until a real reading arrives (fallback values in use)
 
 // Open-Meteo: winddirection (0=N, 90=E), windspeed (km/h)
 // Convert: vx = -sin(dir*PI/180) * speed * scale
@@ -141,6 +167,8 @@ class Particle {
     this.noiseOff = Math.random() * 10000;
     this.phase = Math.random() * Math.PI * 2;
     this.amplitude = 0.1 + Math.random() * 0.3;
+    this.ix = 0;   // decaying impulse from a tap gust
+    this.iy = 0;
   }
 
   update() {
@@ -154,8 +182,10 @@ class Particle {
     const oscVx = osc * 0.02;
     const oscVy = osc * 0.015;
 
-    this.x += vx + nvx + oscVx;
-    this.y += vy + nvy + oscVy;
+    this.x += vx + nvx + oscVx + this.ix;
+    this.y += vy + nvy + oscVy + this.iy;
+    this.ix *= 0.94;
+    this.iy *= 0.94;
     this.noiseOff += CONFIG.noiseSpeed;
 
     // store trail
@@ -164,11 +194,13 @@ class Particle {
       this.trail.shift();
     }
 
-    // wrap around edges
+    // wrap around edges (and drop the trail so it doesn't streak across the screen)
+    const ox = this.x, oy = this.y;
     if (this.x < -50) this.x = W + 50;
     if (this.x > W + 50) this.x = -50;
     if (this.y < -50) this.y = H + 50;
     if (this.y > H + 50) this.y = -50;
+    if (this.x !== ox || this.y !== oy) this.trail = [];
   }
 
   draw(ctx) {
@@ -224,10 +256,42 @@ function drawWindIndicator() {
 function updateDataBar() {
   const el = document.getElementById('databar');
   if (!el) return;
-  const now = performance.now();
-  const ago = Math.round((now - lastFetchTime) / 1000);
-  el.textContent = `Open-Meteo SF wind · ${Math.round(wind.speed)} km/h · updated ${ago}s ago · ${particles.length} particles`;
+  if (!isLive) {
+    el.textContent = `fallback wind (Open-Meteo unavailable) · ${Math.round(wind.speed)} km/h · ${particles.length} particles`;
+    return;
+  }
+  const ago = Math.round((performance.now() - lastFetchTime) / 1000);
+  el.textContent = `Open-Meteo SF wind · live · ${Math.round(wind.speed)} km/h · updated ${ago}s ago · ${particles.length} particles`;
 }
+
+// ─── Tap: a gust from the tap point, plus a detail panel ───
+let detailTimer = null;
+canvas.addEventListener('pointerdown', (e) => {
+  const R = CONFIG.gustRadius;
+  for (const p of particles) {
+    const dx = p.x - e.clientX;
+    const dy = p.y - e.clientY;
+    const d = Math.hypot(dx, dy);
+    if (d < R && d > 0.001) {
+      const f = (1 - d / R) * CONFIG.gustStrength;
+      p.ix += (dx / d) * f;
+      p.iy += (dy / d) * f;
+    }
+  }
+  const dirNames = ['N','NE','E','SE','S','SW','W','NW'];
+  const idx = Math.round((wind.dir % 360) / 45) % 8;
+  const source = isLive
+    ? `Open-Meteo, live, ${Math.round((performance.now() - lastFetchTime) / 1000)}s ago`
+    : 'fallback values (Open-Meteo unavailable)';
+  const detail = document.getElementById('detail');
+  detail.innerHTML =
+    `<b>San Francisco wind</b><br>` +
+    `${Math.round(wind.speed)} km/h from ${dirNames[idx]} (${Math.round(wind.dir)}°)<br>` +
+    `${source}`;
+  detail.classList.add('visible');
+  clearTimeout(detailTimer);
+  detailTimer = setTimeout(() => detail.classList.remove('visible'), CONFIG.detailMs);
+});
 
 // ─── Init ─────────────────────────────────────────────────────────
 const particles = [];
@@ -265,22 +329,23 @@ async function fetchWind() {
     const res = await fetch(CONFIG.apiUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (data.current_weather) {
-      wind.dir = data.current_weather.winddirection;
-      wind.speed = data.current_weather.windspeed;
-      updateWindVector();
-      lastFetchTime = performance.now();
-    }
-  } catch (e) {
-    console.warn('Wind API failed, using fallback:', e.message);
+    if (!data.current_weather) throw new Error('No current_weather in response');
+    wind.dir = data.current_weather.winddirection;
+    wind.speed = data.current_weather.windspeed;
+    updateWindVector();
     lastFetchTime = performance.now();
-    // fallback already set
+    isLive = true;
+  } catch (e) {
+    // Keep the last live reading if there is one (its age keeps counting);
+    // otherwise the fallback wind stays and the data bar says so.
+    console.warn(isLive ? 'Wind refresh failed, keeping last reading:' : 'Wind API failed, using fallback:', e.message);
   }
 }
 
 fetchWind().then(() => {
   loop();
 });
+setInterval(fetchWind, CONFIG.refreshMs);
 </script>
 </body>
 </html>

@@ -48,8 +48,12 @@ Each particle wobbles a little on its own, so the field reads as air rather than
 - The top-right corner shows speed and compass direction; the line at the bottom shows the
   source, speed, seconds since the fetch and the particle count.
 
-The wind is fetched once per page load; reload for a fresh reading. If the request fails the
-piece falls back to 15 km/h from the south, without labelling it as fallback.
+Tap or click anywhere for a gust that pushes nearby particles outward and a panel with the
+speed, compass bearing and data source; it fades after three seconds.
+
+The wind is re-fetched every ten minutes. If the first request fails the piece uses 15 km/h
+from the south and the bottom line reads `fallback wind (Open-Meteo unavailable)`; if a later
+refresh fails, the last live reading stays and its age keeps counting.
 
 ## Run it
 
